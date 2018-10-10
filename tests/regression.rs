@@ -545,6 +545,6 @@ fn issue_140() {
         ColorType::Grayscale,
         BitDepth::Two,
         ColorType::Grayscale,
-        BitDepth::One,
+        BitDepth::Two,
     );
 }
