@@ -95,7 +95,7 @@ jobs:
     - name: Install musl (for aarch64)
       if: ${{ contains(matrix.target, 'linux-musl') && contains(matrix.target, 'aarch64') }}
       run: |
-        curl -L "https://musl.cc/aarch64-linux-musl-cross.tgz" | tar -xzf .
+        curl -L "https://musl.cc/aarch64-linux-musl-cross.tgz" | tar -xzf - .
         echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
       
     - name: Install toolchain
