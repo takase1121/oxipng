@@ -65,11 +65,53 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
+        target:
+          - x86_64-unknown-linux-musl
+          - x86_64-apple-darwin
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+          - i686-linux-android
+          - x86_64-linux-android
+        exclude:
+          # mac builds on linux
+          - os: ubuntu-latest
+            target: x86_64-apple-darwin
+          # linux builds on MacOS
+          - os: macos-latest
+            target: x86_64-unknown-linux-musl
+          # android builds on MacOS
+          - os: macos-latest
+            target: aarch64-linux-android
+          - os: macos-latest
+            target: armv7-linux-androideabi
+          - os: macos-latest
+            target: i686-linux-android
+          - os: macos-latest
+            target: x86_64-linux-android
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            strip: strip
           - os: macos-latest
             target: x86_64-apple-darwin
+            strip: strip
+          # android builds
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+            arch: arm64-v8a
+            strip: llvm-strip
+          - os: ubuntu-latest
+            target: armv7-linux-androideabi
+            arch: armeabi-v7a
+            strip: llvm-strip
+          - os: ubuntu-latest
+            target: i686-linux-android
+            arch: x86
+            strip: llvm-strip
+          - os: ubuntu-latest
+            target: x86_64-linux-android
+            arch: x86_64
+            strip: llvm-strip
 
     runs-on: ${{ matrix.os }}
 
@@ -84,18 +126,45 @@ jobs:
         target: ${{ matrix.target }}
         override: true
 
+    - name: Install NDK
+      id: setup-ndk
+      if: contains(matrix.target, 'android')
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r25b
+        add-to-path: false
+
+    - name: Add NDK environment variables
+      if: contains(matrix.target, 'android')
+      run: |
+        echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+        echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+        echo "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+    - name: Install cargo-ndk
+      if: contains(matrix.target, 'android')
+      uses: baptiste0928/cargo-install@v1
+      with:
+        crate: cargo-ndk
+
     - name: Install musl
       if: contains(matrix.target, 'linux-musl')
       run: |
         sudo apt-get install musl-tools
 
     - name: Build oxipng
+      if: "!contains(matrix.target, 'android')"
       run: |
         cargo build --release --target ${{ matrix.target }}
 
+    - name: Build oxipng (Android)
+      if: contains(matrix.target, 'android')
+      run: |
+        cargo ndk -t ${{ matrix.arch }} build --release 
+
     - name: Strip binary
       run: |
-        strip target/${{ matrix.target }}/release/oxipng
+        ${{ matrix.strip }} target/${{ matrix.target }}/release/oxipng
 
     - name: Get the version
       id: tagName
