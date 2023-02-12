@@ -1,5 +1,5 @@
 use indexmap::IndexSet;
-use oxipng::internal_tests::*;
+use oxipng::{internal_tests::*, Interlacing, RowFilter};
 use oxipng::{InFile, OutFile};
 use std::fs::remove_file;
 use std::path::Path;
@@ -11,7 +11,7 @@ fn get_opts(input: &Path) -> (OutFile, oxipng::Options) {
         ..Default::default()
     };
     let mut filter = IndexSet::new();
-    filter.insert(0);
+    filter.insert(RowFilter::None);
     options.filter = filter;
 
     (
@@ -33,7 +33,7 @@ fn test_it_converts(
 
     assert_eq!(png.raw.ihdr.color_type, color_type_in);
     assert_eq!(png.raw.ihdr.bit_depth, bit_depth_in);
-    assert_eq!(png.raw.ihdr.interlaced, 1);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::Adam7);
 
     match oxipng::optimize(&InFile::Path(input), &output, &opts) {
         Ok(_) => (),
@@ -443,10 +443,6 @@ fn interlaced_palette_8_should_be_palette_8() {
 
 #[test]
 fn interlaced_palette_8_should_be_palette_4() {
-    // miniz doesn't estimate compression that well
-    if !oxipng::internal_tests::cfzlib::is_supported() {
-        return;
-    }
     test_it_converts(
         "tests/files/interlaced_palette_8_should_be_palette_4.png",
         ColorType::Indexed,

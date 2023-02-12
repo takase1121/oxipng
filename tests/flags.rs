@@ -1,5 +1,5 @@
 use indexmap::IndexSet;
-use oxipng::internal_tests::*;
+use oxipng::{internal_tests::*, Interlacing, RowFilter};
 use oxipng::{InFile, OutFile};
 #[cfg(feature = "filetime")]
 use std::cell::RefCell;
@@ -16,7 +16,7 @@ fn get_opts(input: &Path) -> (OutFile, oxipng::Options) {
         ..Default::default()
     };
     let mut filter = IndexSet::new();
-    filter.insert(0);
+    filter.insert(RowFilter::None);
     options.filter = filter;
 
     (
@@ -170,10 +170,10 @@ fn verbose_mode() {
     });
 
     let mut logs: Vec<_> = receiver.into_iter().collect();
-    assert_eq!(logs.len(), 4);
+    assert_eq!(logs.len(), 1);
     logs.sort();
     for (i, log) in logs.into_iter().enumerate() {
-        let expected_prefix = format!("    zc = 9  zs = {}  f = 0 ", i);
+        let expected_prefix = format!("    zc = 11  f = None ");
         assert!(
             log.starts_with(&expected_prefix),
             "logs[{}] = {:?} doesn't start with {:?}",
@@ -324,11 +324,11 @@ fn strip_headers_none() {
 fn interlacing_0_to_1() {
     let input = PathBuf::from("tests/files/interlacing_0_to_1.png");
     let (output, mut opts) = get_opts(&input);
-    opts.interlace = Some(1);
+    opts.interlace = Some(Interlacing::Adam7);
 
     let png = PngData::new(&input, opts.fix_errors).unwrap();
 
-    assert_eq!(png.raw.ihdr.interlaced, 0);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::None);
 
     match oxipng::optimize(&InFile::Path(input), &output, &opts) {
         Ok(_) => (),
@@ -345,7 +345,7 @@ fn interlacing_0_to_1() {
         }
     };
 
-    assert_eq!(png.raw.ihdr.interlaced, 1);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::Adam7);
 
     remove_file(output).ok();
 }
@@ -354,11 +354,11 @@ fn interlacing_0_to_1() {
 fn interlacing_1_to_0() {
     let input = PathBuf::from("tests/files/interlacing_1_to_0.png");
     let (output, mut opts) = get_opts(&input);
-    opts.interlace = Some(0);
+    opts.interlace = Some(Interlacing::None);
 
     let png = PngData::new(&input, opts.fix_errors).unwrap();
 
-    assert_eq!(png.raw.ihdr.interlaced, 1);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::Adam7);
 
     match oxipng::optimize(&InFile::Path(input), &output, &opts) {
         Ok(_) => (),
@@ -375,7 +375,7 @@ fn interlacing_1_to_0() {
         }
     };
 
-    assert_eq!(png.raw.ihdr.interlaced, 0);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::None);
 
     remove_file(output).ok();
 }
@@ -384,11 +384,11 @@ fn interlacing_1_to_0() {
 fn interlacing_0_to_1_small_files() {
     let input = PathBuf::from("tests/files/interlacing_0_to_1_small_files.png");
     let (output, mut opts) = get_opts(&input);
-    opts.interlace = Some(1);
+    opts.interlace = Some(Interlacing::Adam7);
 
     let png = PngData::new(&input, opts.fix_errors).unwrap();
 
-    assert_eq!(png.raw.ihdr.interlaced, 0);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::None);
     assert_eq!(png.raw.ihdr.color_type, ColorType::Indexed);
     assert_eq!(png.raw.ihdr.bit_depth, BitDepth::Eight);
 
@@ -407,7 +407,7 @@ fn interlacing_0_to_1_small_files() {
         }
     };
 
-    assert_eq!(png.raw.ihdr.interlaced, 1);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::Adam7);
     assert_eq!(png.raw.ihdr.color_type, ColorType::Indexed);
     assert_eq!(png.raw.ihdr.bit_depth, BitDepth::One);
 
@@ -418,11 +418,11 @@ fn interlacing_0_to_1_small_files() {
 fn interlacing_1_to_0_small_files() {
     let input = PathBuf::from("tests/files/interlacing_1_to_0_small_files.png");
     let (output, mut opts) = get_opts(&input);
-    opts.interlace = Some(0);
+    opts.interlace = Some(Interlacing::None);
 
     let png = PngData::new(&input, opts.fix_errors).unwrap();
 
-    assert_eq!(png.raw.ihdr.interlaced, 1);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::Adam7);
     assert_eq!(png.raw.ihdr.color_type, ColorType::Indexed);
     assert_eq!(png.raw.ihdr.bit_depth, BitDepth::Eight);
 
@@ -441,7 +441,7 @@ fn interlacing_1_to_0_small_files() {
         }
     };
 
-    assert_eq!(png.raw.ihdr.interlaced, 0);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::None);
     assert_eq!(png.raw.ihdr.color_type, ColorType::Indexed);
     // the depth can't be asserted reliably, because on such small file different zlib implementations pick different depth as the best
 
@@ -452,14 +452,14 @@ fn interlacing_1_to_0_small_files() {
 fn interlaced_0_to_1_other_filter_mode() {
     let input = PathBuf::from("tests/files/interlaced_0_to_1_other_filter_mode.png");
     let (output, mut opts) = get_opts(&input);
-    opts.interlace = Some(1);
+    opts.interlace = Some(Interlacing::Adam7);
     let mut filter = IndexSet::new();
-    filter.insert(4);
+    filter.insert(RowFilter::Paeth);
     opts.filter = filter;
 
     let png = PngData::new(&input, opts.fix_errors).unwrap();
 
-    assert_eq!(png.raw.ihdr.interlaced, 0);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::None);
 
     match oxipng::optimize(&InFile::Path(input), &output, &opts) {
         Ok(_) => (),
@@ -476,7 +476,7 @@ fn interlaced_0_to_1_other_filter_mode() {
         }
     };
 
-    assert_eq!(png.raw.ihdr.interlaced, 1);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::Adam7);
 
     remove_file(output).ok();
 }
@@ -586,24 +586,6 @@ fn zopfli_mode() {
     opts.deflate = Deflaters::Zopfli {
         iterations: NonZeroU8::new(15).unwrap(),
     };
-
-    test_it_converts(
-        input,
-        &output,
-        &opts,
-        ColorType::RGB,
-        BitDepth::Eight,
-        ColorType::RGB,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-#[cfg(feature = "libdeflater")]
-fn libdeflater_mode() {
-    let input = PathBuf::from("tests/files/zopfli_mode.png");
-    let (output, mut opts) = get_opts(&input);
-    opts.deflate = Deflaters::Libdeflater;
 
     test_it_converts(
         input,

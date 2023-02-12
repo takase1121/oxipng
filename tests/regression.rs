@@ -1,5 +1,5 @@
 use indexmap::IndexSet;
-use oxipng::internal_tests::*;
+use oxipng::{internal_tests::*, Interlacing, RowFilter};
 use oxipng::{InFile, OutFile};
 use std::fs::remove_file;
 use std::path::Path;
@@ -11,7 +11,7 @@ fn get_opts(input: &Path) -> (OutFile, oxipng::Options) {
         ..Default::default()
     };
     let mut filter = IndexSet::new();
-    filter.insert(0);
+    filter.insert(RowFilter::None);
     options.filter = filter;
 
     (
@@ -62,7 +62,13 @@ fn test_it_converts(
         "optimized to wrong bit depth"
     );
     if let Some(palette) = png.raw.palette.as_ref() {
-        assert!(palette.len() <= 1 << (png.raw.ihdr.bit_depth.as_u8() as usize));
+        let mut max_palette_size = 1 << (png.raw.ihdr.bit_depth.as_u8() as usize);
+        // Ensure bKGD color is valid
+        if let Some(&idx) = png.raw.aux_headers.get(b"bKGD").and_then(|b| b.first()) {
+            assert!(palette.len() > idx as usize);
+            max_palette_size = max_palette_size.max(idx as usize + 1);
+        }
+        assert!(palette.len() <= max_palette_size);
     } else {
         assert_ne!(png.raw.ihdr.color_type, ColorType::Indexed);
     }
@@ -86,11 +92,11 @@ fn issue_29() {
 fn issue_42() {
     let input = PathBuf::from("tests/files/issue_42.png");
     let (output, mut opts) = get_opts(&input);
-    opts.interlace = Some(1);
+    opts.interlace = Some(Interlacing::Adam7);
 
     let png = PngData::new(&input, opts.fix_errors).unwrap();
 
-    assert_eq!(png.raw.ihdr.interlaced, 0);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::None);
     assert_eq!(png.raw.ihdr.color_type, ColorType::GrayscaleAlpha);
     assert_eq!(png.raw.ihdr.bit_depth, BitDepth::Eight);
 
@@ -109,7 +115,7 @@ fn issue_42() {
         }
     };
 
-    assert_eq!(png.raw.ihdr.interlaced, 1);
+    assert_eq!(png.raw.ihdr.interlaced, Interlacing::Adam7);
     assert_eq!(png.raw.ihdr.color_type, ColorType::GrayscaleAlpha);
     assert_eq!(png.raw.ihdr.bit_depth, BitDepth::Eight);
 
@@ -288,7 +294,7 @@ fn issue_92_filter_0() {
 fn issue_92_filter_5() {
     let input = "tests/files/issue-92.png";
     let (_, mut opts) = get_opts(Path::new(input));
-    opts.filter = [5].iter().cloned().collect();
+    opts.filter = [RowFilter::MinSum].iter().cloned().collect();
     let output = OutFile::Path(Some(Path::new(input).with_extension("-f5-out.png")));
 
     test_it_converts(
@@ -302,103 +308,11 @@ fn issue_92_filter_5() {
 }
 
 #[test]
-fn issue_113_white() {
+fn issue_113() {
     let input = "tests/files/issue-113.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.interlace = Some(1);
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Black);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-white-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::GrayscaleAlpha,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_113_black() {
-    let input = "tests/files/issue-113.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.interlace = Some(1);
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Black);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-black-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::GrayscaleAlpha,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_113_right() {
-    let input = "tests/files/issue-113.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.interlace = Some(1);
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Right);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-right-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::GrayscaleAlpha,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_113_left() {
-    let input = "tests/files/issue-113.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.interlace = Some(1);
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Left);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-left-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::GrayscaleAlpha,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_113_up() {
-    let input = "tests/files/issue-113.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.interlace = Some(1);
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Up);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-up-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::GrayscaleAlpha,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_113_down() {
-    let input = "tests/files/issue-113.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.interlace = Some(1);
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Down);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-down-out.png")));
+    let (output, mut opts) = get_opts(Path::new(input));
+    opts.interlace = Some(Interlacing::Adam7);
+    opts.optimize_alpha = true;
     test_it_converts(
         input,
         Some((output, opts)),
@@ -423,97 +337,10 @@ fn issue_129() {
 }
 
 #[test]
-fn issue_133_black() {
+fn issue_133() {
     let input = "tests/files/issue-133.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Black);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-black-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::RGBA,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_133_white() {
-    let input = "tests/files/issue-133.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::White);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-white-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::RGBA,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_133_up() {
-    let input = "tests/files/issue-133.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Up);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-up-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::RGBA,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_133_down() {
-    let input = "tests/files/issue-133.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Down);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-down-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::RGBA,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_133_right() {
-    let input = "tests/files/issue-133.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Right);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-right-out.png")));
-    test_it_converts(
-        input,
-        Some((output, opts)),
-        ColorType::RGBA,
-        BitDepth::Eight,
-        ColorType::RGBA,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
-fn issue_133_left() {
-    let input = "tests/files/issue-133.png";
-    let (_, mut opts) = get_opts(Path::new(input));
-    opts.alphas = IndexSet::new();
-    opts.alphas.insert(AlphaOptim::Left);
-    let output = OutFile::Path(Some(Path::new(input).with_extension("-left-out.png")));
+    let (output, mut opts) = get_opts(Path::new(input));
+    opts.optimize_alpha = true;
     test_it_converts(
         input,
         Some((output, opts)),
@@ -573,19 +400,6 @@ fn issue_159() {
 }
 
 #[test]
-#[cfg(target_pointer_width = "64")]
-fn issue_167() {
-    test_it_converts(
-        "tests/files/issue-167.png",
-        None,
-        ColorType::Grayscale,
-        BitDepth::Eight,
-        ColorType::Grayscale,
-        BitDepth::Eight,
-    );
-}
-
-#[test]
 fn issue_171() {
     test_it_converts(
         "tests/files/issue-171.png",
@@ -613,13 +427,49 @@ fn issue_175() {
 fn issue_182() {
     let input = "tests/files/issue-182.png";
     let (output, mut opts) = get_opts(Path::new(input));
-    opts.interlace = Some(0);
+    opts.interlace = Some(Interlacing::Adam7);
 
     test_it_converts(
         input,
         Some((output, opts)),
         ColorType::Grayscale,
         BitDepth::One,
+        ColorType::Grayscale,
+        BitDepth::One,
+    );
+}
+
+#[test]
+fn issue_195() {
+    test_it_converts(
+        "tests/files/issue-195.png",
+        None,
+        ColorType::RGBA,
+        BitDepth::Eight,
+        ColorType::Indexed,
+        BitDepth::Eight,
+    );
+}
+
+#[test]
+fn issue_426_01() {
+    test_it_converts(
+        "tests/files/issue-426-01.png",
+        None,
+        ColorType::Grayscale,
+        BitDepth::Eight,
+        ColorType::Grayscale,
+        BitDepth::One,
+    );
+}
+
+#[test]
+fn issue_426_02() {
+    test_it_converts(
+        "tests/files/issue-426-02.png",
+        None,
+        ColorType::Grayscale,
+        BitDepth::Eight,
         ColorType::Grayscale,
         BitDepth::One,
     );

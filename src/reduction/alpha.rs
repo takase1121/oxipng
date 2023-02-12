@@ -1,33 +1,9 @@
-use crate::colors::AlphaOptim;
-use crate::colors::ColorType;
-use crate::evaluate::Evaluator;
+use crate::colors::{BitDepth, ColorType};
 use crate::headers::IhdrData;
-use crate::png::scan_lines::ScanLine;
 use crate::png::PngImage;
-#[cfg(not(feature = "parallel"))]
-use crate::rayon::prelude::*;
-use indexmap::IndexSet;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-use std::sync::Arc;
 
-pub(crate) fn try_alpha_reductions(
-    png: Arc<PngImage>,
-    alphas: &IndexSet<AlphaOptim>,
-    eval: &Evaluator,
-) {
-    if alphas.is_empty() {
-        return;
-    }
-
-    alphas
-        .par_iter()
-        .with_max_len(1)
-        .filter_map(|&alpha| filtered_alpha_channel(&png, alpha))
-        .for_each(|image| eval.try_image(Arc::new(image)));
-}
-
-pub fn filtered_alpha_channel(png: &PngImage, optim: AlphaOptim) -> Option<PngImage> {
+/// Clean the alpha channel by setting the color of all fully transparent pixels to black
+pub fn cleaned_alpha_channel(png: &PngImage) -> Option<PngImage> {
     let (bpc, bpp) = match png.ihdr.color_type {
         ColorType::RGBA | ColorType::GrayscaleAlpha => {
             let cpp = png.channels_per_pixel();
@@ -39,18 +15,17 @@ pub fn filtered_alpha_channel(png: &PngImage, optim: AlphaOptim) -> Option<PngIm
         }
     };
 
-    let raw_data = match optim {
-        AlphaOptim::NoOp => return None,
-        AlphaOptim::Black => reduced_alpha_to_black(png, bpc, bpp),
-        AlphaOptim::White => reduced_alpha_to_white(png, bpc, bpp),
-        AlphaOptim::Up => reduced_alpha_to_up(png, bpc, bpp),
-        AlphaOptim::Down => reduced_alpha_to_down(png, bpc, bpp),
-        AlphaOptim::Left => reduced_alpha_to_left(png, bpc, bpp),
-        AlphaOptim::Right => reduced_alpha_to_right(png, bpc, bpp),
-    };
+    let mut reduced = Vec::with_capacity(png.data.len());
+    for pixel in png.data.chunks(bpp) {
+        if pixel.iter().skip(bpp - bpc).all(|b| *b == 0) {
+            reduced.resize(reduced.len() + bpp, 0);
+        } else {
+            reduced.extend_from_slice(pixel);
+        }
+    }
 
     Some(PngImage {
-        data: raw_data,
+        data: reduced,
         ihdr: png.ihdr,
         palette: png.palette.clone(),
         transparency_pixel: png.transparency_pixel.clone(),
@@ -58,155 +33,58 @@ pub fn filtered_alpha_channel(png: &PngImage, optim: AlphaOptim) -> Option<PngIm
     })
 }
 
-fn reduced_alpha_to_black(png: &PngImage, bpc: usize, bpp: usize) -> Vec<u8> {
-    let mut reduced = Vec::with_capacity(png.data.len());
-    for line in png.scan_lines() {
-        reduced.push(line.filter);
-        for pixel in line.data.chunks(bpp) {
-            if pixel.iter().skip(bpp - bpc).fold(0, |sum, i| sum | i) == 0 {
-                reduced.resize(reduced.len() + bpp, 0);
-            } else {
-                reduced.extend_from_slice(pixel);
-            }
-        }
-    }
-    reduced
-}
-
-fn reduced_alpha_to_white(png: &PngImage, bpc: usize, bpp: usize) -> Vec<u8> {
-    let mut reduced = Vec::with_capacity(png.data.len());
-    for line in png.scan_lines() {
-        reduced.push(line.filter);
-        for pixel in line.data.chunks(bpp) {
-            if pixel.iter().skip(bpp - bpc).fold(0, |sum, i| sum | i) == 0 {
-                reduced.resize(reduced.len() + bpp - bpc, 255);
-                reduced.resize(reduced.len() + bpc, 0);
-            } else {
-                reduced.extend_from_slice(pixel);
-            }
-        }
-    }
-    reduced
-}
-
-fn reduced_alpha_to_up(png: &PngImage, bpc: usize, bpp: usize) -> Vec<u8> {
-    let mut scan_lines = png.scan_lines().collect::<Vec<ScanLine<'_>>>();
-    scan_lines.reverse();
-    let mut lines = Vec::with_capacity(scan_lines.len());
-    let mut last_line = Vec::new();
-    let mut current_line = Vec::with_capacity(scan_lines[0].data.len() + 1); // filter size + pixels
-    for line in scan_lines {
-        if line.data.len() != last_line.len() {
-            last_line = vec![0; line.data.len()];
-        }
-        current_line.push(line.filter);
-        for (pixel, last_pixel) in line.data.chunks(bpp).zip(last_line.chunks(bpp)) {
-            if pixel.iter().skip(bpp - bpc).fold(0, |sum, i| sum | i) == 0 {
-                current_line.extend_from_slice(&last_pixel[0..(bpp - bpc)]);
-                current_line.resize(current_line.len() + bpc, 0);
-            } else {
-                current_line.extend_from_slice(pixel);
-            }
-        }
-        last_line = current_line.clone();
-        lines.push(current_line.clone());
-        current_line.clear();
-    }
-    lines.into_iter().rev().flatten().collect()
-}
-
-fn reduced_alpha_to_down(png: &PngImage, bpc: usize, bpp: usize) -> Vec<u8> {
-    let mut reduced = Vec::with_capacity(png.data.len());
-    let mut last_line = Vec::new();
-    for line in png.scan_lines() {
-        if line.data.len() != last_line.len() {
-            last_line = vec![0; line.data.len()];
-        }
-        reduced.push(line.filter);
-        for (pixel, last_pixel) in line.data.chunks(bpp).zip(last_line.chunks(bpp)) {
-            if pixel.iter().skip(bpp - bpc).fold(0, |sum, i| sum | i) == 0 {
-                reduced.extend_from_slice(&last_pixel[0..(bpp - bpc)]);
-                reduced.resize(reduced.len() + bpc, 0);
-            } else {
-                reduced.extend_from_slice(pixel);
-            }
-        }
-        last_line = reduced.clone();
-    }
-    reduced
-}
-
-fn reduced_alpha_to_left(png: &PngImage, bpc: usize, bpp: usize) -> Vec<u8> {
-    let mut reduced = Vec::with_capacity(png.data.len());
-    for line in png.scan_lines() {
-        let mut line_bytes = Vec::with_capacity(line.data.len());
-        let mut last_pixel = vec![0; bpp];
-        for pixel in line.data.chunks(bpp).rev() {
-            if pixel.iter().skip(bpp - bpc).fold(0, |sum, i| sum | i) == 0 {
-                line_bytes.extend_from_slice(&last_pixel[0..(bpp - bpc)]);
-                line_bytes.resize(line_bytes.len() + bpc, 0);
-            } else {
-                line_bytes.extend_from_slice(pixel);
-            }
-            last_pixel = pixel.to_owned();
-        }
-        reduced.push(line.filter);
-        reduced.extend(line_bytes.chunks(bpp).rev().flatten());
-    }
-    reduced
-}
-
-fn reduced_alpha_to_right(png: &PngImage, bpc: usize, bpp: usize) -> Vec<u8> {
-    let mut reduced = Vec::with_capacity(png.data.len());
-    for line in png.scan_lines() {
-        reduced.push(line.filter);
-        let mut last_pixel = vec![0; bpp];
-        for pixel in line.data.chunks(bpp) {
-            if pixel.iter().skip(bpp - bpc).fold(0, |sum, i| sum | i) == 0 {
-                reduced.extend_from_slice(&last_pixel[0..(bpp - bpc)]);
-                reduced.resize(reduced.len() + bpc, 0);
-            } else {
-                reduced.extend_from_slice(pixel);
-            }
-            last_pixel = pixel.to_owned();
-        }
-    }
-    reduced
-}
-
 #[must_use]
-pub fn reduced_alpha_channel(png: &PngImage) -> Option<PngImage> {
+pub fn reduced_alpha_channel(png: &PngImage, optimize_alpha: bool) -> Option<PngImage> {
     let target_color_type = match png.ihdr.color_type {
         ColorType::GrayscaleAlpha => ColorType::Grayscale,
         ColorType::RGBA => ColorType::RGB,
         _ => return None,
     };
-    let byte_depth = png.ihdr.bit_depth.as_u8() >> 3;
-    let channels = png.channels_per_pixel();
+    let byte_depth = (png.ihdr.bit_depth.as_u8() >> 3) as usize;
+    let channels = png.channels_per_pixel() as usize;
     let bpp = channels * byte_depth;
-    let bpp_mask = bpp - 1;
-    if 0 != bpp & bpp_mask {
-        return None;
-    }
     let colored_bytes = bpp - byte_depth;
-    for line in png.scan_lines() {
-        for (i, &byte) in line.data.iter().enumerate() {
-            if i as u8 & bpp_mask >= colored_bytes && byte != 255 {
-                return None;
-            }
+
+    // If alpha optimisation is enabled, see if the image contains only fully opaque and fully transparent pixels.
+    // In case this occurs, we want to try and find an unused color we can use for the tRNS chunk.
+    // Rather than an exhaustive search, we will just keep track of 256 shades of gray, which should cover many cases.
+    let mut has_transparency = false;
+    let mut used_colors = vec![false; 256];
+
+    for pixel in png.data.chunks(bpp) {
+        if optimize_alpha && pixel.iter().skip(colored_bytes).all(|b| *b == 0) {
+            // Fully transparent, we may be able to reduce with tRNS
+            has_transparency = true;
+        } else if pixel.iter().skip(colored_bytes).any(|b| *b != 255) {
+            // Partially transparent, the image is not reducible
+            return None;
+        } else if optimize_alpha && pixel.iter().take(colored_bytes).all(|b| *b == pixel[0]) {
+            // Opaque shade of gray, we can't use this color for tRNS
+            used_colors[pixel[0] as usize] = true;
         }
     }
+
+    let transparency_pixel = if has_transparency {
+        // If no unused color was found we will have to fail here
+        // Otherwise, proceed to construct the tRNS chunk
+        let unused_color = used_colors.iter().position(|b| !*b)? as u8;
+        Some(match png.ihdr.bit_depth {
+            BitDepth::Sixteen => vec![unused_color; colored_bytes],
+            // 8-bit is still stored as 16-bit, with the high byte set to 0
+            _ => [0, unused_color].repeat(colored_bytes),
+        })
+    } else {
+        None
+    };
 
     let mut raw_data = Vec::with_capacity(png.data.len());
-    for line in png.scan_lines() {
-        raw_data.push(line.filter);
-        for (i, &byte) in line.data.iter().enumerate() {
-            if i as u8 & bpp_mask >= colored_bytes {
-                continue;
+    for pixel in png.data.chunks(bpp) {
+        match transparency_pixel {
+            Some(ref trns) if pixel.iter().skip(colored_bytes).all(|b| *b == 0) => {
+                raw_data.resize(raw_data.len() + colored_bytes, trns[1]);
             }
-
-            raw_data.push(byte);
-        }
+            _ => raw_data.extend_from_slice(&pixel[0..colored_bytes]),
+        };
     }
 
     let mut aux_headers = png.aux_headers.clone();
@@ -224,7 +102,7 @@ pub fn reduced_alpha_channel(png: &PngImage) -> Option<PngImage> {
             ..png.ihdr
         },
         aux_headers,
-        transparency_pixel: None,
+        transparency_pixel,
         palette: None,
     })
 }
